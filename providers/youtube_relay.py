@@ -22,7 +22,7 @@ import re
 
 from . import platform_relay
 from .exceptions import PublishError
-from .types import PostType, PublishContent, PublishResult, PublishState, PublishStatus
+from .types import PublishContent, PublishResult, PublishState, PublishStatus
 
 NETWORK = "youtube"
 VIDEO_ID = re.compile(r"(?:youtu\.be/|[?&]v=|/shorts/)([\w-]{11})")
@@ -37,11 +37,14 @@ def is_relay_handle(handle: str) -> bool:
 
 
 def title_for(content: PublishContent) -> str:
-    """The same title the direct path would send (``#Shorts`` for a Short)."""
-    title = content.title or content.text or ""
-    if content.post_type == PostType.SHORT and "#Shorts" not in title:
-        title = f"{title} #Shorts".strip()
-    return title[:100]
+    """The video's title, without the ``#Shorts`` the direct path appends.
+
+    On 13-oct-2026 the two relayed posts whose title ended in " #Shorts" stayed
+    "publishing" on the Platform for over 20 minutes and never reached YouTube,
+    while the two without it were live in about 90 s. YouTube already treats a
+    vertical video under three minutes as a Short, so the tag adds nothing.
+    """
+    return (content.title or content.text or "")[:100]
 
 
 def youtube_options(content: PublishContent) -> dict:
