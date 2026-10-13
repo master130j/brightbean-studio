@@ -29,8 +29,10 @@ API reference: https://github.com/brightbeanxyz/brightbean-platform-agent
 
 from __future__ import annotations
 
+import json as jsonlib
 import logging
 import os
+import subprocess
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -125,6 +127,50 @@ def call(
     return response.json() if response.content else {}
 
 
+def probe(path: str) -> dict:
+    """Width, height and duration of a video or image, read with ffprobe.
+
+    The Platform's ``complete`` takes them as optional, but a YouTube post whose
+    video arrived without them stayed "publishing" for over 20 minutes on
+    13-oct-2026, while the same post with them was live in 98 s. Missing
+    ffprobe or an unreadable file returns ``{}``: the upload goes on without.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height:format=duration",
+                "-of",
+                "json",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        data = jsonlib.loads(out.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        logger.warning("ffprobe could not read %s; uploading without its dimensions", path)
+        return {}
+    stream = (data.get("streams") or [{}])[0]
+    found: dict = {}
+    if stream.get("width") and stream.get("height"):
+        found["width"], found["height"] = int(stream["width"]), int(stream["height"])
+    try:
+        duration = float((data.get("format") or {}).get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration > 0:
+        found["durationSec"] = round(duration, 3)
+    return found
+
+
 def upload(
     provider,
     network: str,
@@ -166,8 +212,13 @@ def upload(
             put = provider._request("PUT", urls[number], data=chunk, timeout=300.0)
             parts.append({"partNumber": number, "etag": put.headers.get("ETag", "")})
     body: dict = {"parts": parts}
-    if duration_sec and media_type == "video":
-        body["durationSec"] = round(float(duration_sec), 3)
+    measured = probe(path)
+    if media_type == "video":
+        if duration_sec:
+            measured["durationSec"] = round(float(duration_sec), 3)
+    else:
+        measured.pop("durationSec", None)
+    body.update(measured)
     asset = call(provider, network, "POST", f"/media/uploads/{asset_id}/complete", json=body)
     return asset.get("id") or asset_id
 
