@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import NoReturn
 from urllib.parse import urlencode
 
+from . import tiktok_relay
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
 from .types import (
@@ -287,7 +288,12 @@ class TikTokProvider(SocialProvider):
         TikTok's integration guidelines require fetching this fresh at posting
         time (the allowed privacy levels depend on the app's audit status and
         the creator's account settings), so the result is never cached.
+
+        With the BrightBean Platform relay configured, the answer is the
+        Platform's: its audited app is the one that will post.
         """
+        if tiktok_relay.enabled():
+            return tiktok_relay.creator_info(self)
         resp = self._request(
             "POST",
             f"{API_BASE}/post/publish/creator_info/query/",
@@ -319,6 +325,11 @@ class TikTokProvider(SocialProvider):
             content,
             privacy_level_is_explicit=privacy_level_is_explicit,
         )
+
+        # Local patch: hand the post to BrightBean Platform, whose TikTok app is
+        # audited, instead of posting with this instance's own (see tiktok_relay).
+        if tiktok_relay.enabled():
+            return tiktok_relay.publish(self, content, privacy_level)
 
         # Prefer FILE_UPLOAD: PULL_FROM_URL requires the source domain to be
         # verified with TikTok, which presigned S3/R2 URLs can't satisfy.
@@ -531,6 +542,8 @@ class TikTokProvider(SocialProvider):
         "TikTok says it failed" apart from "we could not reach TikTok", and only
         the first of those is a reason to fail the post.
         """
+        if tiktok_relay.is_relay_handle(handle):
+            return tiktok_relay.check_status(self, handle)
         data = self._fetch_publish_status(access_token, handle)
         status = data.get("status") or ""
         state = PUBLISH_STATE_BY_TIKTOK_STATUS.get(status, PublishState.PENDING)
@@ -591,6 +604,10 @@ class TikTokProvider(SocialProvider):
         # and silently break analytics for the post. Bail explicitly.
         if not post_id:
             return None
+
+        if tiktok_relay.is_relay_handle(post_id):
+            status = tiktok_relay.check_status(self, post_id)
+            return status.platform_post_id or None
 
         # Positive identification: TikTok video IDs are 19-digit numerics.
         # Anything else (any ``v_…`` publish-handle prefix that exists today
