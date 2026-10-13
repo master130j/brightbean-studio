@@ -9,6 +9,7 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 
+from . import youtube_relay
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, ProviderError, PublishError, QuotaExceededError, TokenExpiredError
 from .google_errors import (
@@ -30,6 +31,7 @@ from .types import (
     PostType,
     PublishContent,
     PublishResult,
+    PublishStatus,
     RateLimitConfig,
     ReplyResult,
 )
@@ -304,6 +306,16 @@ class YouTubeProvider(SocialProvider):
     # Publishing
     # ------------------------------------------------------------------
 
+    @property
+    def publish_is_async(self) -> bool:  # type: ignore[override]
+        """Direct uploads finish in the request; relayed ones are settled later."""
+        return youtube_relay.enabled()
+
+    def check_publish_status(self, access_token: str, handle: str) -> PublishStatus:
+        if youtube_relay.is_relay_handle(handle):
+            return youtube_relay.check_status(self, handle)
+        return super().check_publish_status(access_token, handle)
+
     def publish_post(self, access_token: str, content: PublishContent) -> PublishResult:
         if content.post_type not in (PostType.VIDEO, PostType.SHORT):
             raise PublishError(
@@ -311,6 +323,12 @@ class YouTubeProvider(SocialProvider):
                 platform=self.platform_name,
                 retryable=False,
             )
+
+        # Local patch: uploads from this instance's unverified Google project are
+        # locked private, so hand the video to BrightBean Platform, whose project
+        # is audited (see youtube_relay). That path is asynchronous.
+        if youtube_relay.enabled():
+            return youtube_relay.publish(self, content)
 
         title = content.title or content.text or ""
         description = content.description or content.text or ""
