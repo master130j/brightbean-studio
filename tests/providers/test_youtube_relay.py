@@ -35,7 +35,7 @@ def _resp(payload=None, headers=None):
     return resp
 
 
-def _post(status, *, url="", error="", caption="Descripción", title="Título #Shorts"):
+def _post(status, *, url="", error="", caption="Descripción", title="Título"):
     return {
         "id": "post-1",
         "caption": caption,
@@ -132,7 +132,7 @@ class TestPublish:
 
         assert result.platform_post_id == "bbp:post-1"
         body = fake.json_of("/posts/")
-        assert body["title"] == "Título #Shorts"
+        assert body["title"] == "Título"  # no "#Shorts": it kept relayed posts stuck
         assert body["caption"] == "Descripción"
         assert body["mediaAssetIds"] == ["asset-1"]
         assert body["perAccount"][ACCOUNT]["options"]["youtube"] == {
@@ -151,7 +151,7 @@ class TestPublish:
         provider.publish_post("t", _content(tmp_path, post_type=PostType.VIDEO))
 
         body = fake.json_of("/posts/")
-        assert body["title"] == "Título"  # no #Shorts on a regular video
+        assert body["title"] == "Título"
         assert body["perAccount"][ACCOUNT]["options"]["youtube"] == {"privacyStatus": "public", "madeForKids": False}
 
     def test_a_custom_thumbnail_is_uploaded_and_attached(self, relay_env, tmp_path):
@@ -175,7 +175,7 @@ class TestPublish:
         assert not any(u.endswith(("/media/uploads", "/posts/", "/publish")) for _, u, _ in fake.calls)
 
     def test_a_post_with_another_title_is_not_mistaken_for_this_one(self, relay_env, tmp_path):
-        fake = FakePlatform(listing=[_post("publishing", title="Otro video #Shorts")])
+        fake = FakePlatform(listing=[_post("publishing", title="Otro video")])
         provider = _provider(fake)
 
         provider.publish_post("t", _content(tmp_path))
