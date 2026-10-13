@@ -223,3 +223,37 @@ class TestStatus:
         provider = YouTubeProvider({"client_id": "i", "client_secret": "s"})
         with pytest.raises(NotImplementedError):
             provider.check_publish_status("t", "dQw4w9WgXcQ")
+
+
+class TestMediaDimensions:
+    def test_the_upload_sends_the_measured_width_and_height(self, relay_env, tmp_path, monkeypatch):
+        """Without them a YouTube post stayed "publishing" on the Platform for
+        over 20 minutes; with them it was live in 98 s (13-oct-2026)."""
+        monkeypatch.setattr(platform_relay, "probe", lambda path: {"width": 1080, "height": 1920, "durationSec": 5.0})
+        fake = FakePlatform()
+        provider = _provider(fake)
+
+        provider.publish_post("t", _content(tmp_path))
+
+        complete = next(k["json"] for m, u, k in fake.calls if u.endswith("/complete"))
+        # The engine's duration (from the media asset) wins over the probe's.
+        assert complete == {
+            "parts": [{"partNumber": 1, "etag": '"etag-1"'}],
+            "width": 1080,
+            "height": 1920,
+            "durationSec": 23.9,
+        }
+
+    def test_probe_reads_ffprobes_json(self, monkeypatch):
+        out = MagicMock(stdout='{"streams":[{"width":1080,"height":1920}],"format":{"duration":"23.866667"}}')
+        monkeypatch.setattr(platform_relay.subprocess, "run", lambda *a, **k: out)
+
+        assert platform_relay.probe("video.mp4") == {"width": 1080, "height": 1920, "durationSec": 23.867}
+
+    def test_probe_gives_up_quietly(self, monkeypatch):
+        def missing(*a, **k):
+            raise FileNotFoundError("ffprobe")
+
+        monkeypatch.setattr(platform_relay.subprocess, "run", missing)
+
+        assert platform_relay.probe("video.mp4") == {}
